@@ -135,6 +135,87 @@ export type SendResult =
   | { ok: true; messageId: string | null; messageIds: string[] }
   | { ok: false; status: number; error: string };
 
+// ─── Starting a conversation ───
+
+/** Media that replaces a template's approved header asset for one send. */
+export type TemplateHeaderMedia = {
+  type: "image" | "video" | "document";
+  /** Public URL (or `id`: a Meta media id). */
+  link?: string;
+  id?: string;
+  /** Document display name (document headers only). */
+  filename?: string;
+};
+
+/** Approved WhatsApp template that opens (or reopens) a conversation. */
+export type TemplateSend = {
+  name: string;
+  /** Language code of the approved variant, e.g. "fr" or "en_US". */
+  language: string;
+  /**
+   * Variable values, one flat list in template order: text-header variables,
+   * then body variables, then one per dynamic URL button (see
+   * `WhatsAppTemplate.params`). Media headers take no value here.
+   */
+  params?: string[];
+  /** Overrides the approved header asset for this send. */
+  headerMedia?: TemplateHeaderMedia;
+  /** Required by templates whose header is a LOCATION. */
+  headerLocation?: { latitude: number; longitude: number; name?: string; address?: string };
+  /** Values for copy-code, flow or URL buttons, by position in the template. */
+  buttonParams?: Array<{ index: number; subType: "url" | "copy_code" | "flow"; value: string }>;
+};
+
+/**
+ * A message to someone the account has no conversation with yet (or whose
+ * WhatsApp 24h window is closed). On WhatsApp it must be an approved
+ * `template`, or `text` with `utility` (Direct Send).
+ */
+export type StartConversationArgs = {
+  accountId: string;
+  platform: Platform;
+  /**
+   * WhatsApp / SMS: phone number in international format ("+33 6 12 34 56 78"
+   * is sent as "33612345678"). X: numeric user id. Slack: member id.
+   * iMessage: "+" phone or email. Give either `to` or `username`.
+   */
+  to?: string;
+  /** X or Bluesky handle, Reddit username. */
+  username?: string;
+  text?: string;
+  template?: TemplateSend;
+  /** WhatsApp Direct Send: `text` as a UTILITY message, without a template. */
+  utility?: boolean;
+};
+
+export type StartConversationResult =
+  | { ok: true; conversationId: string; messageId: string | null }
+  /** `code` is Zernio's error code when it gives one (TEMPLATE_REQUIRED, recipient_opted_out…). */
+  | { ok: false; status: number; error: string; code?: string };
+
+/** One value a template takes, in the order `TemplateSend.params` expects. */
+export type WhatsAppTemplateParam = {
+  part: "header" | "body" | "button";
+  /** Placeholder name: "1", "2"… or a named one ("first_name"); the button's text for buttons. */
+  name: string;
+};
+
+/** A WhatsApp template as Zernio lists it, flattened for pickers and previews. */
+export type WhatsAppTemplate = {
+  id: string;
+  name: string;
+  language: string;
+  status: string;
+  category: string;
+  /** TEXT, IMAGE, VIDEO, DOCUMENT or LOCATION when the template has a header. */
+  headerFormat?: string;
+  headerText?: string;
+  body: string;
+  footer?: string;
+  buttons: Array<{ type: string; text: string; url?: string }>;
+  params: WhatsAppTemplateParam[];
+};
+
 // ─── Inbound ───
 
 export type AttachmentCategory = "image" | "audio" | "video" | "document" | "sticker" | "other";

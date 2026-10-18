@@ -160,4 +160,83 @@ describe("listInboxAccounts", () => {
     ]);
     expect(f.calls[0].url).toBe("https://zernio.com/api/v1/accounts");
   });
+
+  it("starts a WhatsApp conversation with a template", async () => {
+    const f = fakeFetch([
+      { status: 201, json: { success: true, data: { messageId: "wamid.1", conversationId: "66c3", participantId: "33612345678" } } },
+    ]);
+    const client = new ZernioClient({ apiKey: "k", fetch: f.impl });
+    const result = await client.startConversation({
+      accountId: "acc",
+      platform: "whatsapp",
+      to: "+33 6 12 34 56 78",
+      template: { name: "relance_menu", language: "fr", params: ["Léa"] },
+    });
+    expect(result).toEqual({ ok: true, conversationId: "66c3", messageId: "wamid.1" });
+    expect(f.calls[0].url).toBe("https://zernio.com/api/v1/inbox/conversations");
+    expect(f.calls[0].init.method).toBe("POST");
+    expect(sentBody(f.calls[0])).toEqual({
+      accountId: "acc",
+      participantId: "33612345678",
+      templateName: "relance_menu",
+      templateLanguage: "fr",
+      templateParams: ["Léa"],
+    });
+  });
+
+  it("reports Zernio's error code when a conversation cannot start", async () => {
+    const f = fakeFetch([{ status: 400, json: { error: "Template required", code: "TEMPLATE_REQUIRED" } }]);
+    const client = new ZernioClient({ apiKey: "k", fetch: f.impl, onError: silent });
+    const result = await client.startConversation({ accountId: "acc", platform: "whatsapp", to: "336", text: "Salut" });
+    expect(result).toMatchObject({ ok: false, status: 400, code: "TEMPLATE_REQUIRED" });
+  });
+
+  it("treats a success without conversation id as a failure", async () => {
+    const f = fakeFetch([{ json: { success: true, data: {} } }]);
+    const client = new ZernioClient({ apiKey: "k", fetch: f.impl, onError: silent });
+    const result = await client.startConversation({ accountId: "acc", platform: "sms", to: "336", text: "Salut" });
+    expect(result).toMatchObject({ ok: false, status: 200 });
+  });
+
+  it("lists approved WhatsApp templates, flattened", async () => {
+    const f = fakeFetch([
+      {
+        json: {
+          success: true,
+          templates: [
+            {
+              id: "t1",
+              name: "relance_menu",
+              language: "fr",
+              status: "APPROVED",
+              category: "UTILITY",
+              components: [{ type: "BODY", text: "Bonjour {{1}}" }],
+            },
+          ],
+        },
+      },
+    ]);
+    const client = new ZernioClient({ apiKey: "k", fetch: f.impl });
+    const templates = await client.listWhatsAppTemplates("acc 1", { language: "fr" });
+    expect(f.calls[0].url).toBe("https://zernio.com/api/v1/whatsapp/templates?accountId=acc+1&status=APPROVED&language=fr");
+    expect(templates).toEqual([
+      {
+        id: "t1",
+        name: "relance_menu",
+        language: "fr",
+        status: "APPROVED",
+        category: "UTILITY",
+        body: "Bonjour {{1}}",
+        buttons: [],
+        params: [{ part: "body", name: "1" }],
+      },
+    ]);
+  });
+
+  it("returns no templates when Zernio refuses the listing", async () => {
+    const f = fakeFetch([{ status: 404, json: { error: "not found" } }]);
+    const client = new ZernioClient({ apiKey: "k", fetch: f.impl, onError: silent });
+    expect(await client.listWhatsAppTemplates("acc", { status: "ANY" })).toEqual([]);
+    expect(f.calls[0].url).toBe("https://zernio.com/api/v1/whatsapp/templates?accountId=acc");
+  });
 });

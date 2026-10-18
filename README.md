@@ -23,6 +23,8 @@ conversation, with the host app's own actions, texts and audiences plugged in.
 - **Dedupe deliveries.** The component stores Zernio event ids. Zernio retries a delivery up to
   7 times over ~51h with the same id.
 - **Reply to comments.** Public reply and Instagram/Messenger private reply.
+- **Write first.** Open a conversation with an approved WhatsApp template (listed with their
+  variables), Direct Send, or plain text on SMS, X, Slack…
 
 ## Install
 
@@ -88,6 +90,35 @@ await zernio.sendWithFallback(target, { type: "locationRequest", text: "Envoie t
 
 `buildSendBodies(platform, accountId, msg)` exposes the exact request bodies (and a `degraded`
 flag) without sending, which is useful for previews and tests.
+
+## Starting a conversation
+
+`send` answers inside a conversation. To write first (a number that never wrote to the account,
+or a WhatsApp contact whose 24h window is closed), use `startConversation`. Zernio reuses the
+existing conversation with that participant, and the result carries its `conversationId`.
+
+```ts
+const templates = await zernio.listWhatsAppTemplates(accountId); // approved ones
+// → [{ name: "relance_menu", language: "fr", body: "Bonjour {{1}}…", params: [{ part: "body", name: "1" }], … }]
+
+const result = await zernio.startConversation({
+  accountId,
+  platform: "whatsapp",
+  to: "+33 6 12 34 56 78", // sent as 33612345678
+  template: { name: "relance_menu", language: "fr", params: ["Léa"] },
+});
+if (result.ok) result.conversationId;
+else result.code; // TEMPLATE_REQUIRED, INVALID_TEMPLATE_PARAMS, recipient_opted_out…
+```
+
+`params` is one flat list in the order of `template.params`: text-header variables, body
+variables, then one value per dynamic URL button. Media headers are filled from the approved
+template (`headerMedia` overrides them); `headerLocation` and `buttonParams` cover location
+headers and copy-code / flow buttons. Without a template, WhatsApp takes `text` with
+`utility: true` (Direct Send) when the account is eligible; other platforms take plain `text`
+(`to` is a phone for SMS, a user id for X, a member id for Slack; `username` for X, Bluesky and
+Reddit handles). `renderWhatsAppTemplate(template, params)` gives the text the contact reads,
+for previews and message logs, and `buildStartConversationBody` the exact request body.
 
 ## Workflows
 

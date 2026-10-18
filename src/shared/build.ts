@@ -12,6 +12,7 @@ import type {
   OutboundMessage,
   ReplyButton,
   SendOptions,
+  StartConversationArgs,
 } from "./types.js";
 
 type Body = Record<string, unknown>;
@@ -66,6 +67,47 @@ export function buildSendBodies(
     ...(i === 0 && opts.replyTo ? { replyTo: opts.replyTo } : {}),
   }));
   return { bodies, degraded };
+}
+
+/** Platforms whose `participantId` is a phone number in digits only. */
+const DIGITS_ONLY_PLATFORMS = new Set(["whatsapp", "sms"]);
+
+/**
+ * Builds the JSON body for `POST /v1/inbox/conversations`, which opens a
+ * conversation (or reuses the existing one with that participant). WhatsApp
+ * needs an approved `template`, or `text` with `utility` (Direct Send).
+ */
+export function buildStartConversationBody(args: StartConversationArgs): Body {
+  const { platform, template } = args;
+  if (template && !capabilitiesOf(platform).templates) {
+    throw new Error(`Message templates are WhatsApp-only (platform: ${platform || "unknown"})`);
+  }
+  if (template && args.utility) {
+    throw new Error("A template cannot be sent as Direct Send (utility)");
+  }
+  if (!args.to && !args.username) {
+    throw new Error("startConversation needs `to` or `username`");
+  }
+
+  const body: Body = { accountId: args.accountId };
+  if (args.to) {
+    body.participantId = DIGITS_ONLY_PLATFORMS.has(platform)
+      ? args.to.replace(/\D/g, "").replace(/^00/, "")
+      : args.to.trim();
+  } else {
+    body.participantUsername = args.username;
+  }
+  if (args.text) body.message = args.text;
+  if (args.utility && platform === "whatsapp") body.category = "utility";
+  if (template) {
+    body.templateName = template.name;
+    body.templateLanguage = template.language;
+    if (template.params?.length) body.templateParams = template.params;
+    if (template.headerMedia) body.headerMedia = template.headerMedia;
+    if (template.headerLocation) body.headerLocation = template.headerLocation;
+    if (template.buttonParams?.length) body.templateButtonParams = template.buttonParams;
+  }
+  return body;
 }
 
 function render(platform: string, caps: PlatformCapabilities, msg: OutboundMessage): Rendered {

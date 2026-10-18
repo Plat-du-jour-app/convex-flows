@@ -1,6 +1,16 @@
-import { buildSendBodies, toPlainText } from "./build.js";
+import { buildSendBodies, buildStartConversationBody, toPlainText } from "./build.js";
 import { capabilitiesOf } from "./capabilities.js";
-import type { OutboundMessage, ReplyButton, SendOptions, SendResult, SendTarget } from "./types.js";
+import { summarizeWhatsAppTemplate } from "./templates.js";
+import type {
+  OutboundMessage,
+  ReplyButton,
+  SendOptions,
+  SendResult,
+  SendTarget,
+  StartConversationArgs,
+  StartConversationResult,
+  WhatsAppTemplate,
+} from "./types.js";
 
 export const DEFAULT_ZERNIO_BASE_URL = "https://zernio.com/api";
 
@@ -93,6 +103,53 @@ export class ZernioClient {
     const text = toPlainText(msg);
     if (text === null) return result;
     return this.send(target, { type: "text", text }, { replyTo: opts?.replyTo });
+  }
+
+  /**
+   * Opens a conversation with someone the account has not talked to yet, or
+   * reopens one whose WhatsApp 24h window is closed (Zernio reuses the
+   * existing conversation with that participant). On WhatsApp, send an
+   * approved `template` (see `listWhatsAppTemplates`) or Direct Send text.
+   */
+  async startConversation(args: StartConversationArgs): Promise<StartConversationResult> {
+    const body = buildStartConversationBody(args);
+    const result = await this.postJson("/v1/inbox/conversations", body, `${args.platform} start conversation`);
+    if (!result.ok) return result;
+    const data = (result.json as { data?: { conversationId?: string; messageId?: string } }).data;
+    if (!data?.conversationId) {
+      const error = `no conversationId in ${JSON.stringify(result.json)}`;
+      this.onError(`${args.platform} start conversation`, error);
+      return { ok: false, status: 200, error };
+    }
+    return { ok: true, conversationId: data.conversationId, messageId: data.messageId ?? null };
+  }
+
+  /**
+   * WhatsApp templates of an account, flattened (see `summarizeWhatsAppTemplate`).
+   * Approved ones by default: the only ones a send accepts.
+   */
+  async listWhatsAppTemplates(
+    accountId: string,
+    opts: { status?: "APPROVED" | "PENDING" | "REJECTED" | "PAUSED" | "DISABLED" | "ANY"; name?: string; language?: string } = {},
+  ): Promise<WhatsAppTemplate[]> {
+    const query = new URLSearchParams({ accountId });
+    const status = opts.status ?? "APPROVED";
+    if (status !== "ANY") query.set("status", status);
+    if (opts.name) query.set("name", opts.name);
+    if (opts.language) query.set("language", opts.language);
+    let response: Response;
+    try {
+      response = await this.fetchImpl(this.url(`/v1/whatsapp/templates?${query}`), { headers: this.headers() });
+    } catch (e) {
+      this.onError("templates", e instanceof Error ? e.message : String(e));
+      return [];
+    }
+    if (!response.ok) {
+      this.onError("templates", `HTTP ${response.status}`);
+      return [];
+    }
+    const json = (await response.json()) as { templates?: Array<Parameters<typeof summarizeWhatsAppTemplate>[0]> };
+    return (json.templates ?? []).map(summarizeWhatsAppTemplate);
   }
 
   /** Adds an emoji reaction (Zernio internal message id). No-op where unsupported. */
@@ -233,6 +290,25 @@ export class ZernioClient {
   }
 
   private async post(path: string, body: unknown, label: string): Promise<SendResult> {
+    const result = await this.postJson(path, body, label);
+    if (!result.ok) return { ok: false, status: result.status, error: result.error };
+    // Shapes differ per endpoint: `{ success, data: { messageId } }` for sends,
+    // `{ success, data: { commentId } }` for comment replies, `{ success,
+    // messageId }` for reactions, `{ status, messageId }` for private replies.
+    const json = result.json as {
+      messageId?: string;
+      data?: { messageId?: string; commentId?: string };
+    };
+    const id = json.data?.messageId ?? json.data?.commentId ?? json.messageId ?? null;
+    return { ok: true, messageId: id, messageIds: id ? [id] : [] };
+  }
+
+  /** POSTs JSON; a success is a 2xx JSON body without `success: false`. */
+  private async postJson(
+    path: string,
+    body: unknown,
+    label: string,
+  ): Promise<{ ok: true; json: object } | { ok: false; status: number; error: string; code?: string }> {
     let response: Response;
     try {
       response = await this.fetchImpl(this.url(path), {
@@ -252,21 +328,18 @@ export class ZernioClient {
     } catch {
       // Non-JSON body: handled below with the status code.
     }
-    // Shapes differ per endpoint: `{ success, data: { messageId } }` for sends,
-    // `{ success, data: { commentId } }` for comment replies, `{ success,
-    // messageId }` for reactions, `{ status, messageId }` for private replies.
-    const result = (json ?? {}) as {
-      success?: boolean;
-      messageId?: string;
-      data?: { messageId?: string; commentId?: string };
-    };
+    const result = (json ?? {}) as { success?: boolean; code?: unknown };
     if (response.ok && json !== null && result.success !== false) {
-      const id = result.data?.messageId ?? result.data?.commentId ?? result.messageId ?? null;
-      return { ok: true, messageId: id, messageIds: id ? [id] : [] };
+      return { ok: true, json: result };
     }
     const error = json ? JSON.stringify(json) : `HTTP ${response.status}`;
     this.onError(label, error);
-    return { ok: false, status: response.status, error };
+    return {
+      ok: false,
+      status: response.status,
+      error,
+      ...(typeof result.code === "string" ? { code: result.code } : {}),
+    };
   }
 
   private url(path: string): string {
