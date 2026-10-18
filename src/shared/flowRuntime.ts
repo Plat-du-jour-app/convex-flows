@@ -7,6 +7,8 @@ import type {
   FlowGraph,
   FlowInput,
   FlowNode,
+  HttpNodeData,
+  HttpRequestSpec,
   MessageNodeData,
   Trigger,
 } from "./flowTypes.js";
@@ -115,6 +117,51 @@ function asText(value: unknown): string {
 export function interpolate(template: string, scope: FlowScope): string {
   return template.replace(/\{\{\s*([\w.]+)\s*\}\}/g, (_, path: string) => asText(resolvePath(scope, path)));
 }
+
+// ─── HTTP requests (`http` nodes) ───
+
+const PLACEHOLDER = /\{\{\s*([\w.]+)\s*\}\}/g;
+const DEFAULT_HTTP_TIMEOUT_S = 10;
+const MAX_HTTP_TIMEOUT_S = 30;
+const BODY_METHODS: ReadonlySet<string> = new Set(["POST", "PUT", "PATCH"]);
+
+/** Fills placeholders with `encode`d values; `{{secret.NAME}}` stays for the host. */
+function fillTemplate(template: string, scope: FlowScope, encode: (value: string) => string): string {
+  return template.replace(PLACEHOLDER, (whole, path: string) =>
+    path.startsWith("secret.") ? whole : encode(asText(resolvePath(scope, path))),
+  );
+}
+
+/** JSON string content (without the quotes). */
+function jsonEscape(value: string): string {
+  return JSON.stringify(value).slice(1, -1);
+}
+
+/**
+ * The request an `http` node sends: values URL-encoded in the URL, stripped
+ * of line breaks in headers, JSON-escaped in the body. Secrets are left as
+ * `{{secret.NAME}}` for the host to fill.
+ */
+export function buildHttpRequest(data: HttpNodeData, scope: FlowScope): HttpRequestSpec {
+  const headers: Record<string, string> = {};
+  for (const h of data.headers ?? []) {
+    const name = h.name?.trim();
+    // A line break would start another header: none, typed or interpolated.
+    if (name) headers[name] = fillTemplate(h.value ?? "", scope, (v) => v).replace(/[\r\n]+/g, " ");
+  }
+  const withBody = BODY_METHODS.has(data.method) && !!data.body?.trim();
+  const seconds = Math.min(Math.max(data.timeoutSeconds || DEFAULT_HTTP_TIMEOUT_S, 1), MAX_HTTP_TIMEOUT_S);
+  return {
+    method: data.method,
+    url: fillTemplate(data.url.trim(), scope, encodeURIComponent),
+    headers,
+    ...(withBody ? { body: fillTemplate(data.body!, scope, jsonEscape) } : {}),
+    timeoutMs: seconds * 1000,
+  };
+}
+
+/** An https URL whose host name is written out (no placeholder before the path). */
+const HTTP_URL = /^https:\/\/[^/?#{}\s]+(?:[/?#]\S*)?$/;
 
 /** Comma-separated values of a rule, each normalized; empty ones dropped. */
 function listOf(value: string | undefined, scope: FlowScope): string[] {
@@ -322,7 +369,10 @@ export type FlowIssueCode =
   | "missing_choices_source"
   | "missing_flow"
   | "unknown_flow"
-  | "missing_event";
+  | "missing_event"
+  | "missing_url"
+  | "bad_http_url"
+  | "invalid_json_body";
 
 export type FlowIssue = { code: FlowIssueCode; nodeId?: string; detail?: string };
 
@@ -454,6 +504,22 @@ export function validateFlowGraph(
         const d = node.data as { event?: string; saveAs?: string };
         if (!d.event?.trim()) issues.push({ code: "missing_event", nodeId: node.id });
         if (d.saveAs && !VARIABLE_NAME.test(d.saveAs)) issues.push({ code: "invalid_variable_name", nodeId: node.id });
+        break;
+      }
+      case "http": {
+        const d = node.data as HttpNodeData;
+        const url = d.url?.trim() ?? "";
+        if (!url) issues.push({ code: "missing_url", nodeId: node.id });
+        else if (!HTTP_URL.test(url)) issues.push({ code: "bad_http_url", nodeId: node.id });
+        if (d.saveAs && !VARIABLE_NAME.test(d.saveAs)) issues.push({ code: "invalid_variable_name", nodeId: node.id });
+        if (BODY_METHODS.has(d.method) && d.body?.trim()) {
+          try {
+            // Placeholders become a bare 0: valid inside quotes and as a number.
+            JSON.parse(d.body.replace(PLACEHOLDER, "0"));
+          } catch {
+            issues.push({ code: "invalid_json_body", nodeId: node.id });
+          }
+        }
         break;
       }
       case "handoff":

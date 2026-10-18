@@ -16,6 +16,8 @@ export { ZernioClient, DEFAULT_ZERNIO_BASE_URL, INBOX_PLATFORMS } from "../share
 export type { ZernioClientOptions, InboxAccount } from "../shared/client.js";
 export { buildSendBodies, buildStartConversationBody, toPlainText } from "../shared/build.js";
 export { summarizeWhatsAppTemplate, renderWhatsAppTemplate } from "../shared/templates.js";
+export { performHttpRequest, isAllowedHost } from "../shared/http.js";
+export type { HttpGuard } from "../shared/http.js";
 export type { BuiltSend } from "../shared/build.js";
 export { PLATFORM_CAPABILITIES, capabilitiesOf, isPlatform } from "../shared/capabilities.js";
 export type { PlatformCapabilities } from "../shared/capabilities.js";

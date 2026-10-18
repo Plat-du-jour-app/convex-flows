@@ -19,6 +19,7 @@ import {
   readAnswer,
   renderMessage,
   renderQuestion,
+  buildHttpRequest,
   type FlowScope,
 } from "../shared/flowRuntime.js";
 import {
@@ -32,6 +33,8 @@ import {
   type FlowNodeData,
   type HostActionArgs,
   type HostActionResult,
+  type HostHttpArgs,
+  type HostHttpResult,
   type HostSendArgs,
   type HostSendResult,
   type HostTextsArgs,
@@ -90,6 +93,8 @@ const hostArgs = {
   actionHandle: v.optional(v.string()),
   /** Resolves `{{t.key}}` texts (see HostTextsArgs). */
   textsHandle: v.optional(v.string()),
+  /** Sends `http` node requests (see HostHttpArgs and `performHttpRequest`). */
+  httpHandle: v.optional(v.string()),
   dryRun: v.optional(v.boolean()),
 };
 
@@ -198,6 +203,7 @@ export const _start = internalMutation({
     sendHandle: v.string(),
     actionHandle: v.optional(v.string()),
     textsHandle: v.optional(v.string()),
+    httpHandle: v.optional(v.string()),
     dryRun: v.boolean(),
     input: inputValidator,
     useDraft: v.optional(v.boolean()),
@@ -236,6 +242,7 @@ export const _start = internalMutation({
       sendHandle: args.sendHandle,
       actionHandle: args.actionHandle,
       textsHandle: args.textsHandle,
+      httpHandle: args.httpHandle,
       dryRun: args.dryRun,
       startedAt: now,
       updatedAt: now,
@@ -382,6 +389,28 @@ async function runHostAction(ctx: ActionCtx, run: Run, node: FlowNode<"action">)
     )) as HostActionResult;
   } catch (e) {
     return { output: "error", result: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/** Sends an `http` node's request through the host (never in the simulator). */
+async function runHttp(ctx: ActionCtx, run: Run, node: FlowNode<"http">): Promise<HostHttpResult> {
+  if (run.session.dryRun) return { ok: true, status: 0, body: null, skipped: true };
+  if (!run.session.httpHandle) return { ok: false, status: 0, error: "no http handler" };
+  const args: HostHttpArgs = {
+    request: buildHttpRequest(node.data, run.scope),
+    conversationId: run.session.conversationId,
+    platform: run.session.platform,
+    accountId: run.session.accountId,
+    hostContext: run.session.hostContext,
+    contact: run.scope.contact,
+  };
+  try {
+    return (await ctx.runAction(
+      run.session.httpHandle as FunctionHandle<"action", HostHttpArgs, HostHttpResult>,
+      args,
+    )) as HostHttpResult;
+  } catch (e) {
+    return { ok: false, status: 0, error: e instanceof Error ? e.message : String(e) };
   }
 }
 
@@ -541,6 +570,21 @@ async function advance(ctx: ActionCtx, run: Run, startNodeId: string | undefined
         if (actionNode.data.saveAs) run.scope.vars[actionNode.data.saveAs] = out.result ?? null;
         for (const m of out.messages ?? []) await send(ctx, run, m);
         current = nextNodeId(run.graph, node.id, out.output);
+        break;
+      }
+
+      case "http": {
+        const httpNode = node as FlowNode<"http">;
+        const res = await runHttp(ctx, run, httpNode);
+        if (httpNode.data.saveAs) {
+          run.scope.vars[httpNode.data.saveAs] = {
+            status: res.status,
+            body: res.body ?? null,
+            ...(res.error ? { error: res.error } : {}),
+            ...(res.skipped ? { skipped: true } : {}),
+          };
+        }
+        current = nextNodeId(run.graph, node.id, res.ok ? "ok" : "error");
         break;
       }
 
@@ -731,6 +775,7 @@ export const handleInbound = action({
       sendHandle: args.sendHandle,
       actionHandle: args.actionHandle,
       textsHandle: args.textsHandle,
+      httpHandle: args.httpHandle,
       dryRun,
       input: args.input,
     });
@@ -767,6 +812,7 @@ export const startFlow = action({
       sendHandle: args.sendHandle,
       actionHandle: args.actionHandle,
       textsHandle: args.textsHandle,
+      httpHandle: args.httpHandle,
       dryRun: args.dryRun ?? false,
       input,
       useDraft: args.useDraft,

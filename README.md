@@ -133,6 +133,7 @@ A workflow is a graph: one `trigger` node, then nodes linked by named outputs.
 | `action` | Host action (catalog given to the editor and to `publish`). | the action's outputs |
 | `flow` | Runs another workflow with the same variables; with `returnAfter`, continues here when it ends. | `next` (with return) |
 | `wait_event` | Waits until the host calls `emitEvent(conversationId, event, data)`. | `received`, `timeout` |
+| `http` | Calls an external URL (Make, n8n, a CRM…); the response lands in a variable. | `ok`, `error` |
 | `release` | Ends the run and gives the contact's message back to the host (its own bot, or another workflow). | |
 | `delay`, `set_variable`, `handoff`, `end` | Wait, store a value, hand to a human, stop. | |
 
@@ -151,6 +152,55 @@ on the first line of the message (list replies arrive as "title\ndescription"); 
 symbols only (`?`, `✅`) are compared as typed. `publish` takes `publishingWith` to publish
 workflows that run each other in one go. `FlowSimulation` runs a graph in memory with the
 engine's semantics, for tests.
+
+## Calling an API from a workflow
+
+An `http` node calls an https URL and follows `ok` (2xx) or `error` (other status, timeout,
+refused). With `saveAs`, `vars.<saveAs>` holds `{ status, body }`, the body parsed when it is
+JSON, so a `condition` can test `vars.booking.body.status`.
+
+```json
+{
+  "method": "POST",
+  "url": "https://hook.eu1.make.com/abc123?order={{vars.order.id}}",
+  "headers": [{ "name": "Authorization", "value": "Bearer {{secret.MAKE_TOKEN}}" }],
+  "body": "{\"name\": \"{{contact.name}}\", \"guests\": {{vars.guests}}}",
+  "saveAs": "booking",
+  "timeoutSeconds": 10
+}
+```
+
+Placeholders are URL-encoded in the URL and JSON-escaped in the body (put them inside quotes;
+numbers may stand alone). The host name is always written out, never a placeholder.
+`{{secret.NAME}}` is never filled by the engine: the host fills it when it sends, so keys stay out
+of graphs and editors.
+
+The engine does not send anything itself. The host passes an `httpHandle` with `handleInbound` /
+`startFlow`, and decides which domains workflows may reach (`api.example.com`, `*.make.com`
+for subdomains, or `*` for any public domain name; localhost and bare IP addresses are only
+reached when listed as such). `performHttpRequest` does the work:
+https only, allowed domains only, redirects not followed, timeout, response size cap.
+
+```ts
+import { performHttpRequest, type HostHttpArgs } from "convex-flows";
+
+export const flowsHttp = internalAction({
+  args: { request: v.any(), conversationId: v.string(), platform: v.string(),
+          accountId: v.optional(v.string()), hostContext: v.any(), contact: v.any() },
+  handler: (_ctx, args: HostHttpArgs) =>
+    performHttpRequest(args.request, {
+      allow: ["*.make.com", "api.example.com"],
+      secrets: { MAKE_TOKEN: process.env.MAKE_TOKEN! },
+    }),
+});
+
+// with the other handles:
+httpHandle: await createFunctionHandle(internal.flows.flowsHttp),
+```
+
+Without an `httpHandle`, `http` nodes follow `error`. In a dry run (the editor's simulator) no
+request leaves: the node follows `ok` with `{ status: 0, body: null, skipped: true }`.
+`FlowSimulation` takes a `host.http` function to fake responses in tests.
 
 ## Develop
 

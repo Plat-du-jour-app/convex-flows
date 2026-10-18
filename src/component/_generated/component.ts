@@ -114,6 +114,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           dryRun?: boolean;
           excludeFlowIds?: Array<string>;
           hostContext?: any;
+          httpHandle?: string;
           input: {
             imageUrl?: string;
             location?: {
@@ -162,6 +163,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           dryRun?: boolean;
           flowId: string;
           hostContext?: any;
+          httpHandle?: string;
           input?: {
             imageUrl?: string;
             location?: {

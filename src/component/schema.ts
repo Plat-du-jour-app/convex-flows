@@ -111,6 +111,7 @@ export default defineSchema({
     sendHandle: v.string(),
     actionHandle: v.optional(v.string()),
     textsHandle: v.optional(v.string()),
+    httpHandle: v.optional(v.string()),
     /** Options of the choice the run waits on, as sent (texts resolved). */
     waitChoices: v.optional(v.array(v.object({ id: v.string(), title: v.string() }))),
     dryRun: v.boolean(),

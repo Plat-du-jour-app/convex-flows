@@ -1,6 +1,6 @@
 {
   "name": "convex-flows",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "description": "Convex component for conversational flows over Zernio (WhatsApp first): full outbound messaging, normalized webhooks, signature check, event dedup.",
   "license": "MIT",
   "author": "Patrick Faust",

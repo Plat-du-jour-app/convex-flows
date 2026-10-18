@@ -91,6 +91,27 @@ export type ConditionRule = {
   value?: string;
 };
 
+export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+
+/**
+ * Calls an external URL (Make, n8n, a CRM…) and follows `ok` (2xx) or `error`.
+ * `{{vars.x}}` placeholders are filled (URL-encoded in the URL, JSON-escaped in
+ * the body); `{{secret.NAME}}` is left for the host, so a key never sits in
+ * the graph. The host decides which domains may be called.
+ */
+export type HttpNodeData = {
+  method: HttpMethod;
+  /** https URL; its host name is written out, never a placeholder. */
+  url: string;
+  headers?: Array<{ name: string; value: string }>;
+  /** JSON sent with POST / PUT / PATCH (placeholders go inside quotes; numbers may stand alone). */
+  body?: string;
+  /** Receives `{ status, body }`, the body parsed when it is JSON. */
+  saveAs?: string;
+  /** Seconds before giving up: 10 by default, 30 at most (the contact is waiting). */
+  timeoutSeconds?: number;
+};
+
 export type FlowNodeData = {
   /**
    * `accounts`: the inbox accounts the workflow answers on. A workflow with
@@ -116,6 +137,7 @@ export type FlowNodeData = {
    * in `vars[saveAs]`, or `timeout`.
    */
   wait_event: { event: string; saveAs?: string; timeoutMinutes?: number };
+  http: HttpNodeData;
   /** Hands the conversation to a human: the bot stops answering it. */
   handoff: { note?: string };
   /**
@@ -205,6 +227,8 @@ export function outputsOf(node: FlowNode, actions: ActionDefinition[] = []): str
       return (node.data as FlowNodeData["flow"]).returnAfter ? ["next"] : [];
     case "wait_event":
       return ["received", "timeout"];
+    case "http":
+      return ["ok", "error"];
     case "handoff":
     case "end":
     case "release":
@@ -255,6 +279,36 @@ export type HostTextsArgs = {
 };
 
 export type HostTextsResult = Record<string, string>;
+
+/** The request an `http` node asks the host to send (placeholders filled, secrets not). */
+export type HttpRequestSpec = {
+  method: HttpMethod;
+  url: string;
+  headers: Record<string, string>;
+  body?: string;
+  timeoutMs: number;
+};
+
+export type HostHttpArgs = {
+  request: HttpRequestSpec;
+  conversationId: string;
+  platform: string;
+  accountId?: string;
+  hostContext: unknown;
+  contact: FlowContact;
+};
+
+export type HostHttpResult = {
+  /** True for a 2xx answer: the node follows `ok`, otherwise `error`. */
+  ok: boolean;
+  /** HTTP status, 0 when no answer came back (refused, timeout, network). */
+  status: number;
+  /** Response body, parsed when it is JSON. */
+  body?: unknown;
+  error?: string;
+  /** The editor's simulator did not send the request. */
+  skipped?: boolean;
+};
 
 export type HostActionResult = {
   /** Which of the action's declared outputs to follow. */

@@ -22,6 +22,7 @@ import {
   readAnswer,
   renderMessage,
   renderQuestion,
+  buildHttpRequest,
   segmentsMatch,
   textKeysOf,
   type FlowScope,
@@ -30,6 +31,8 @@ import {
   CHOICE_ID_PREFIX,
   outputsOf,
   type AskNodeData,
+  type HostHttpResult,
+  type HttpRequestSpec,
   type FlowContact,
   type FlowGraph,
   type FlowInput,
@@ -57,6 +60,8 @@ export type SimulationHost = {
   ) => Record<string, string> | Promise<Record<string, string>>;
   /** Graphs `flow` nodes may run, by flow id. */
   flows?: Record<string, FlowGraph>;
+  /** Answers `http` nodes (a fake API in tests); without it they follow `error`. */
+  http?: (request: HttpRequestSpec) => HostHttpResult | Promise<HostHttpResult>;
 };
 
 export type SimulationStatus = "running" | "waiting" | "done" | "failed";
@@ -70,6 +75,8 @@ export type SimulationStep = {
   messages: OutboundMessage[];
   /** Host actions run during the step, in order. */
   actions: Array<{ name: string; params: Record<string, string>; output: string }>;
+  /** Requests `http` nodes sent during the step, in order (secrets not filled). */
+  requests: Array<{ request: HttpRequestSpec; status: number; ok: boolean }>;
   trace: string[];
   error?: string;
 };
@@ -105,7 +112,7 @@ export class FlowSimulation {
   /** The last message was given back to the host (`release`). */
   released = false;
   scope: FlowScope;
-  private step: SimulationStep = { handled: true, status: "running", messages: [], actions: [], trace: [] };
+  private step: SimulationStep = { handled: true, status: "running", messages: [], actions: [], requests: [], trace: [] };
 
   constructor(
     graph: FlowGraph,
@@ -205,7 +212,7 @@ export class FlowSimulation {
     this.released = false;
     // Like the engine, texts are looked up again for each message.
     this.scope.t = {};
-    this.step = { handled: true, status: this.status, messages: [], actions: [], trace: [] };
+    this.step = { handled: true, status: this.status, messages: [], actions: [], requests: [], trace: [] };
   }
 
   private snapshot(): SimulationStep {
@@ -323,6 +330,24 @@ export class FlowSimulation {
           if (data.saveAs) this.scope.vars[data.saveAs] = out.result ?? null;
           this.step.messages.push(...(out.messages ?? []));
           current = nextNodeId(this.graph, node.id, out.output);
+          break;
+        }
+        case "http": {
+          const data = node.data as FlowNodeData["http"];
+          const request = buildHttpRequest(data, this.scope);
+          let res: HostHttpResult;
+          try {
+            res = this.options.host?.http
+              ? await this.options.host.http(request)
+              : { ok: false, status: 0, error: "no http handler" };
+          } catch (e) {
+            res = { ok: false, status: 0, error: e instanceof Error ? e.message : String(e) };
+          }
+          this.step.requests.push({ request, status: res.status, ok: res.ok });
+          if (data.saveAs) {
+            this.scope.vars[data.saveAs] = { status: res.status, body: res.body ?? null, ...(res.error ? { error: res.error } : {}) };
+          }
+          current = nextNodeId(this.graph, node.id, res.ok ? "ok" : "error");
           break;
         }
         case "set_variable": {
