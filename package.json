@@ -1,0 +1,67 @@
+{
+  "name": "convex-flows",
+  "version": "0.10.0",
+  "description": "Convex component for conversational flows over Zernio (WhatsApp first): full outbound messaging, normalized webhooks, signature check, event dedup.",
+  "license": "MIT",
+  "author": "Patrick Faust",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Plat-du-jour-app/convex-flows.git"
+  },
+  "homepage": "https://github.com/Plat-du-jour-app/convex-flows#readme",
+  "bugs": {
+    "url": "https://github.com/Plat-du-jour-app/convex-flows/issues"
+  },
+  "keywords": [
+    "convex",
+    "convex-component",
+    "zernio",
+    "whatsapp",
+    "chatbot",
+    "workflow",
+    "webhooks"
+  ],
+  "type": "module",
+  "files": [
+    "dist",
+    "src"
+  ],
+  "exports": {
+    "./package.json": "./package.json",
+    ".": {
+      "types": "./dist/client/index.d.ts",
+      "default": "./dist/client/index.js"
+    },
+    "./shared": {
+      "types": "./dist/shared/public.d.ts",
+      "default": "./dist/shared/public.js"
+    },
+    "./_generated/component.js": {
+      "types": "./dist/component/_generated/component.d.ts"
+    },
+    "./convex.config": {
+      "types": "./dist/component/convex.config.d.ts",
+      "default": "./dist/component/convex.config.js"
+    },
+    "./convex.config.js": {
+      "types": "./dist/component/convex.config.d.ts",
+      "default": "./dist/component/convex.config.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc --project ./tsconfig.build.json",
+    "build:codegen": "npx convex codegen --component-dir ./src/component && npm run build",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "prepublishOnly": "npm run typecheck && npm test && npm run build"
+  },
+  "peerDependencies": {
+    "convex": "^1.32.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.43",
+    "convex": "1.32.0",
+    "typescript": "5.9.3",
+    "vitest": "3.2.4"
+  }
+}
